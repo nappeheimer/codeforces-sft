@@ -71,7 +71,7 @@ class TrainConfig:
     metric_for_best_model: str = "eval_loss"
 
     # ── KL regularisation ────────────────────────────────────────────────────
-    kl_beta: float = 0.05
+    kl_beta: float = 0.1
 
     # ── Efficiency ───────────────────────────────────────────────────────────
     gradient_checkpointing: bool = True

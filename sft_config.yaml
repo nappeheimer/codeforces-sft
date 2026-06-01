@@ -46,10 +46,10 @@ eval_steps: 100
 load_best_model_at_end: false
 metric_for_best_model: eval_loss
 
-# ── KL regularisation (0 = pure SFT; 0.05 = mild anchor) ─────────────────────
+# ── KL regularisation (0 = pure SFT; 0.1 = default) ──────────────────────────
 # With kl_beta > 0 each GPU process loads a ~14 GB bf16 copy of the base model on CPU.
 # On 8-GPU nodes ensure enough host RAM, or set kl_beta: 0.
-kl_beta: 0.05
+kl_beta: 0.1
 
 # ── Efficiency ───────────────────────────────────────────────────────────────
 gradient_checkpointing: true

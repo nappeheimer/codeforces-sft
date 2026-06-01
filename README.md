@@ -52,7 +52,7 @@ codeforces-sft/
 | Epochs 3–10 | `data/train.jsonl`, **shuffled** each epoch |
 | Checkpoints | Saved **every epoch** under `./checkpoints/checkpoint-*` |
 | Eval during training | **Off** — use saved checkpoints + `test.jsonl` later |
-| Loss | Assistant tokens only + optional KL (`kl_beta: 0.05`) |
+| Loss | Assistant tokens only + optional KL (`kl_beta: 0.1`) |
 
 ---
 

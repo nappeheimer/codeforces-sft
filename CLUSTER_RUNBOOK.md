@@ -145,7 +145,7 @@ Edit **`sft_config.yaml`** only if needed. Defaults:
 | `learning_rate` | `4e-5` | |
 | `per_device_train_batch_size` | `1` | |
 | `gradient_accumulation_steps` | `8` | Effective batch = GPUs × 1 × 8 |
-| `kl_beta` | `0.05` | `0` disables KL / saves CPU RAM |
+| `kl_beta` | `0.1` | `0` disables KL / saves CPU RAM |
 | `do_eval` | `false` | No validation during training |
 | `output_dir` | `./checkpoints` | Where checkpoints go |
 | `save_total_limit` | `null` | Keep **all** epoch checkpoints |
