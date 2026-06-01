@@ -1,0 +1,66 @@
+# =============================================================================
+# Codeforces trace SFT — edit paths/GPUs here; see CLUSTER_RUNBOOK.md to run.
+# =============================================================================
+
+# ── Model (downloaded from Hugging Face on first run) ────────────────────────
+model_name_or_path: Qwen/Qwen2.5-Coder-7B-Instruct
+eos_token: "<|im_end|>"
+
+# ── Training data (place JSONL files in ./data/ — see data/README.txt) ───────
+curriculum_data_path: data/train_curriculum.jsonl
+shuffle_data_path: data/train.jsonl
+eval_data_path: ""
+eval_split_ratio: 0
+curriculum_no_shuffle_epochs: 2
+
+# ── Sequence ─────────────────────────────────────────────────────────────────
+max_seq_length: 32768
+packing: false
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+learning_rate: 4.0e-05
+num_train_epochs: 10
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 8
+# Effective batch ≈ num_gpus × per_device_train_batch_size × gradient_accumulation_steps
+# Example 8 GPUs: 8 × 1 × 8 = 64 sequences per optimizer step
+
+optimizer_type: adamw_torch
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_epsilon: 1.0e-08
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+lr_scheduler_type: cosine_with_min_lr
+lr_scheduler_kwargs:
+  min_lr_rate: 0.1
+warmup_ratio: 0.03
+
+# ── Evaluation during training (off — benchmark checkpoints afterward) ───────
+do_eval: false
+eval_strategy: epoch
+eval_steps: 100
+load_best_model_at_end: false
+metric_for_best_model: eval_loss
+
+# ── KL regularisation (0 = pure SFT; 0.1 = default) ──────────────────────────
+# With kl_beta > 0 each GPU process loads a ~14 GB bf16 copy of the base model on CPU.
+# On 8-GPU nodes ensure enough host RAM, or set kl_beta: 0.
+kl_beta: 0.1
+
+# ── Efficiency ───────────────────────────────────────────────────────────────
+gradient_checkpointing: true
+bf16: true
+use_liger_kernel: false
+
+# ── Logging / checkpoints ───────────────────────────────────────────────────
+seed: 42
+output_dir: ./checkpoints
+hub_model_id: null
+logging_steps: 10
+save_total_limit: null
+report_to: tensorboard
+wandb_project: finecf-cots-sft
+wandb_run_name: qwen25-coder-7b-finecf-kl-reg
