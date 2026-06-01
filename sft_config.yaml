@@ -1,5 +1,6 @@
 # =============================================================================
-# Codeforces trace SFT — edit paths/GPUs here; see CLUSTER_RUNBOOK.md to run.
+# Codeforces trace SFT — 8× A100 80GB, ZeRO-3 (accelerate_zero3.yaml)
+# See README.md / CLUSTER_RUNBOOK.md
 # =============================================================================
 
 # ── Model (downloaded from Hugging Face on first run) ────────────────────────

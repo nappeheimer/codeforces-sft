@@ -20,9 +20,7 @@ codeforces-sft/
 │   ├── train_curriculum.jsonl   (Git LFS, ~215 MB)
 │   ├── train.jsonl              (Git LFS, ~215 MB)
 │   └── test.jsonl               (Git LFS, ~24 MB, benchmarking only)
-├── sft/                      ← trainer, dataset loader, config
-└── scripts/
-    └── prepare_sft_dataset.py   ← optional: re-export JSONL from parquet
+└── sft/                      ← trainer, dataset loader, config (required by run_sft.py)
 ```
 
 ---
@@ -185,9 +183,9 @@ Use different `checkpoint-*` folders to benchmark each epoch later.
 
 | Resource | Guidance |
 |----------|----------|
-| GPUs | 8× A100 40GB (default config) |
+| GPUs | **8× A100 80GB** (`accelerate_zero3.yaml` → `num_processes: 8`) |
 | Disk | ~50 GB+ free (model cache + checkpoints) |
-| CPU RAM | **≥ 128 GB** on 8-GPU nodes if `kl_beta: 0.1` (each rank loads ~14 GB ref model on CPU). Use `kl_beta: 0` if RAM-limited. |
+| CPU RAM | **≥ 128 GB** host RAM if `kl_beta: 0.1` (~14 GB ref model per GPU process on CPU). Use `kl_beta: 0` if RAM-limited. |
 | Network | Hugging Face access on first run |
 
 ---
@@ -198,30 +196,11 @@ Use different `checkpoint-*` folders to benchmark each epoch later.
 |-------|-----|
 | Tiny JSONL after clone | `git lfs install && git lfs pull` |
 | `HF_TOKEN is not set` | `export HF_TOKEN=hf_...` |
-| CUDA OOM | Confirm ZeRO-3 / 8 GPUs; lower `max_seq_length` if needed |
+| CUDA OOM | Rare on 8× A100 80GB with ZeRO-3; confirm `num_processes: 8`; lower `max_seq_length` only if needed |
 | Host RAM OOM | `kl_beta: 0` in `sft_config.yaml` |
 | No flash-attn | OK — training uses `sdpa` automatically |
 
 More detail: **[CLUSTER_RUNBOOK.md](CLUSTER_RUNBOOK.md)**
-
----
-
-## Re-exporting JSONL (optional)
-
-If you have the source parquet and want to regenerate datasets:
-
-```bash
-pip install pandas numpy pyarrow
-python3 scripts/prepare_sft_dataset.py \
-  --parquet /path/to/mega_dataset_train.parquet \
-  --output data/train.jsonl --order none
-python3 scripts/prepare_sft_dataset.py \
-  --parquet /path/to/mega_dataset_train.parquet \
-  --output data/train_curriculum.jsonl --order curriculum_ramp
-python3 scripts/prepare_sft_dataset.py \
-  --parquet /path/to/mega_dataset_test.parquet \
-  --output data/test.jsonl --no-apply-p3-drop
-```
 
 ---
 

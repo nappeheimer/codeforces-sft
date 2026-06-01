@@ -1,3 +1,4 @@
+# 8× A100 80GB node — set num_processes to match GPU count
 compute_environment: LOCAL_MACHINE
 debug: false
 deepspeed_config:

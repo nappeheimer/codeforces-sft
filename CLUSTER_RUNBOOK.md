@@ -43,7 +43,6 @@ Everything is in the GitHub repo (clone + `git lfs pull`):
 | Curriculum JSONL | `data/train_curriculum.jsonl` (Git LFS, 8167 lines) |
 | Shuffle JSONL | `data/train.jsonl` (Git LFS, 8167 lines) |
 | Test JSONL | `data/test.jsonl` (benchmarking after training only) |
-| Re-export script | `scripts/prepare_sft_dataset.py` (optional) |
 
 ---
 
@@ -51,8 +50,8 @@ Everything is in the GitHub repo (clone + `git lfs pull`):
 
 | Resource | Minimum guidance |
 |----------|------------------|
-| GPUs | **8× A100 40GB** (default config). Edit `accelerate_zero3.yaml` → `num_processes` if different (e.g. `4`). |
-| GPU VRAM | 32k context, batch size 1 per GPU, ZeRO-3 — 40GB class GPUs |
+| GPUs | **8× A100 80GB** (default: `num_processes: 8` in `accelerate_zero3.yaml`) |
+| GPU VRAM | 32k `max_seq_length`, batch size 1 per GPU, ZeRO-3 — comfortable on 80GB A100s |
 | Disk | ~50 GB free (model cache ~15 GB + checkpoints ~15–30 GB per epoch × 10) |
 | CPU RAM | **≥ 64 GB** recommended; with `kl_beta: 0.1` each GPU process loads a **~14 GB** ref model on CPU → **~8 × 14 GB ≈ 112 GB** on an 8-GPU node. If RAM is tight, set `kl_beta: 0` in `sft_config.yaml`. |
 | Network | Hugging Face access on first run (model download) |
@@ -203,7 +202,7 @@ python3 run_sft.py
 
 ### How long it might take
 
-Rough order of magnitude on 8× A100, 8167 examples, 32k max length, 10 epochs: **many hours to a few days** depending on average sequence length and I/O. Watch `loss` and checkpoint writes to confirm progress.
+Rough order of magnitude on **8× A100 80GB**, 8167 examples, 32k max length, 10 epochs: **many hours to a few days** depending on average sequence length and I/O. Watch `loss` and checkpoint writes to confirm progress.
 
 ---
 
@@ -232,7 +231,7 @@ checkpoints/checkpoint-<step_for_epoch_5>/
 |---------|-----|
 | `HF_TOKEN is not set` | `export HF_TOKEN=hf_...` |
 | `JSONL not found` | Put files in `data/` or fix paths in `sft_config.yaml` |
-| CUDA OOM | Lower `max_seq_length`, or ensure ZeRO-3 / 8 GPUs; reduce `num_processes` only if you accept smaller effective batch |
+| CUDA OOM | Uncommon on 8×80GB with ZeRO-3; confirm `num_processes: 8`; lower `max_seq_length` only if needed |
 | Host OOM (CPU RAM) | Set `kl_beta: 0` in `sft_config.yaml` |
 | `flash_attn` errors | Ignore (sdpa fallback) or install flash-attn for CUDA match |
 | NCCL timeout / hang | Check GPU interconnect; try `export NCCL_DEBUG=INFO` |
