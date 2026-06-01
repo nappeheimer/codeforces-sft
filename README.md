@@ -4,6 +4,23 @@ Self-contained repo to fine-tune **Qwen/Qwen2.5-Coder-7B-Instruct** on Codeforce
 
 Everything needed to train is in this repository: **code**, **configs**, and **JSONL datasets** (stored with **Git LFS**).
 
+### In the repo vs on the cluster
+
+| Included in Git | You install on the cluster |
+|-----------------|----------------------------|
+| Training code, configs, JSONL (LFS) | **Python 3.10+**, **Git LFS** |
+| | **PyTorch + CUDA** (see Step 1 — not in `requirements.txt`) |
+| | `pip install -r requirements.txt` |
+| | **`HF_TOKEN`** + internet (first run downloads ~15 GB model) |
+
+### Before training — run preflight
+
+```bash
+python3 run_sft.py --check-only
+```
+
+Must end with `All preflight checks passed`. If JSONL files are ~100 bytes, run `git lfs pull`.
+
 ---
 
 ## Repository layout
@@ -196,11 +213,21 @@ Use different `checkpoint-*` folders to benchmark each epoch later.
 |-------|-----|
 | Tiny JSONL after clone | `git lfs install && git lfs pull` |
 | `HF_TOKEN is not set` | `export HF_TOKEN=hf_...` |
+| `unexpected keyword argument 'assistant_only_loss'` | `pip install -U 'trl>=0.19.0,<0.30.0'` |
 | CUDA OOM | Rare on 8× A100 80GB with ZeRO-3; confirm `num_processes: 8`; lower `max_seq_length` only if needed |
-| Host RAM OOM | `kl_beta: 0` in `sft_config.yaml` |
+| Host RAM OOM | `kl_beta: 0` in `sft_config.yaml` (~14 GB CPU per GPU process with KL) |
 | No flash-attn | OK — training uses `sdpa` automatically |
 
 More detail: **[CLUSTER_RUNBOOK.md](CLUSTER_RUNBOOK.md)**
+
+---
+
+## Known limitations (not bugs)
+
+- **Benchmarking code** is not in this repo — only `test.jsonl` for your own eval scripts.
+- **`kl_beta: 0.1`** loads a frozen copy of the 7B model on **CPU per GPU process** — plan for **~128 GB host RAM** on 8 GPUs, or set `kl_beta: 0`.
+- **First Hub download** can take 20–40+ minutes; watch for `[train] Loading model` logs.
+- **TRL ≥ 0.19** is required (`requirements.txt` pins this) for assistant-only loss on chat JSONL.
 
 ---
 

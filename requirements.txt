@@ -1,8 +1,9 @@
 # Python 3.10+ recommended. Install PyTorch with CUDA separately if needed — see CLUSTER_RUNBOOK.md.
 
 torch>=2.4.0
-trl>=0.17.0
-transformers>=4.46.0
+# assistant_only_loss for chat JSONL requires trl>=0.19
+trl>=0.19.0,<0.30.0
+transformers>=4.46.0,<5.0.0
 datasets>=3.0.0
 accelerate>=1.0.0
 deepspeed>=0.15.4

@@ -112,7 +112,7 @@ def _build_sft_config(cfg: TrainConfig, *, num_train_epochs: float):
         save_strategy="epoch",
         load_best_model_at_end=cfg.load_best_model_at_end and cfg.do_eval,
         metric_for_best_model=cfg.metric_for_best_model,
-        max_seq_length=cfg.max_seq_length,
+        max_length=cfg.max_seq_length,
         packing=cfg.packing,
         assistant_only_loss=True,
         seed=cfg.seed,
@@ -268,8 +268,7 @@ def train(cfg: TrainConfig) -> None:
         trainer.args.num_train_epochs = float(total_epochs)
         trainer.set_train_dataset(shuffle_ds)
         trainer.set_shuffle_enabled(True)
-        resume = cfg.output_dir if curriculum_epochs > 0 else None
-        trainer.train(resume_from_checkpoint=resume)
+        trainer.train(resume_from_checkpoint=True if curriculum_epochs > 0 else None)
         if is_main:
             print("[train] Phase 2 complete.", flush=True)
 
