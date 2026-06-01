@@ -53,7 +53,7 @@ Everything is in the GitHub repo (clone + `git lfs pull`):
 | GPUs | **8× A100 80GB** (default: `num_processes: 8` in `accelerate_zero3.yaml`) |
 | GPU VRAM | 32k `max_seq_length`, batch size 1 per GPU, ZeRO-3 — comfortable on 80GB A100s |
 | Disk | ~50 GB free (model cache ~15 GB + checkpoints ~15–30 GB per epoch × 10) |
-| CPU RAM | **≥ 64 GB** recommended; with `kl_beta: 0.1` each GPU process loads a **~14 GB** ref model on CPU → **~8 × 14 GB ≈ 112 GB** on an 8-GPU node. If RAM is tight, set `kl_beta: 0` in `sft_config.yaml`. |
+| CPU RAM | **≥ 64 GB** recommended; with `kl_beta > 0` each GPU process loads a **~14 GB** ref model on CPU → **~8 × 14 GB ≈ 112 GB** on an 8-GPU node. If RAM is tight, set `kl_beta: 0` in `sft_config.yaml`. |
 | Network | Hugging Face access on first run (model download) |
 
 ---
@@ -145,7 +145,7 @@ Edit **`sft_config.yaml`** only if needed. Defaults:
 | `learning_rate` | `4e-5` | |
 | `per_device_train_batch_size` | `1` | |
 | `gradient_accumulation_steps` | `8` | Effective batch = GPUs × 1 × 8 |
-| `kl_beta` | `0.1` | `0` disables KL / saves CPU RAM |
+| `kl_beta` | `0.05` | `0` disables KL / saves CPU RAM |
 | `do_eval` | `false` | No validation during training |
 | `output_dir` | `./checkpoints` | Where checkpoints go |
 | `save_total_limit` | `null` | Keep **all** epoch checkpoints |
