@@ -189,7 +189,7 @@ Use different `checkpoint-*` folders to benchmark each epoch later.
 | `max_seq_length` | 32768 | |
 | `per_device_train_batch_size` | 1 | |
 | `gradient_accumulation_steps` | 8 | effective batch ≈ GPUs × 8 |
-| `kl_beta` | 0.05 | set **0** if host RAM tight (see below) |
+| `kl_beta` | 0.1 | set **0** if host RAM tight (see below) |
 | `do_eval` | false | |
 | `output_dir` | `./checkpoints` | |
 | `save_total_limit` | null | keep all epoch checkpoints |
@@ -225,7 +225,7 @@ More detail: **[CLUSTER_RUNBOOK.md](CLUSTER_RUNBOOK.md)**
 ## Known limitations (not bugs)
 
 - **Benchmarking code** is not in this repo — only `test.jsonl` for your own eval scripts.
-- **`kl_beta: 0.05`** loads a frozen copy of the 7B model on **CPU per GPU process** — plan for **~128 GB host RAM** on 8 GPUs, or set `kl_beta: 0`.
+- **`kl_beta: 0.1`** loads a frozen copy of the 7B model on **CPU per GPU process** — plan for **~128 GB host RAM** on 8 GPUs, or set `kl_beta: 0`.
 - **First Hub download** can take 20–40+ minutes; watch for `[train] Loading model` logs.
 - **TRL ≥ 0.19** is required (`requirements.txt` pins this) for assistant-only loss on chat JSONL.
 

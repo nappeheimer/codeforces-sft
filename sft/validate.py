@@ -6,6 +6,28 @@ from pathlib import Path
 from .config import TrainConfig
 from .dataset import load_jsonl
 
+_LFS_POINTER_PREFIX = "version https://git-lfs.github.com"
+
+
+def _check_jsonl_file(path: Path, label: str) -> list[str]:
+    errors: list[str] = []
+    if not path.is_file():
+        errors.append(f"{label} not found: {path}")
+        return errors
+    if path.stat().st_size < 1024:
+        head = path.read_text(encoding="utf-8", errors="replace")[:80]
+        if head.startswith(_LFS_POINTER_PREFIX):
+            errors.append(
+                f"{label} is a Git LFS pointer, not real data ({path}). "
+                "Run: git lfs install && git lfs pull"
+            )
+        else:
+            errors.append(
+                f"{label} looks too small ({path.stat().st_size} bytes). "
+                "Expected ~200MB train files — run git lfs pull"
+            )
+    return errors
+
 
 def validate_config(cfg: TrainConfig) -> list[str]:
     """Return a list of human-readable errors (empty = OK)."""
@@ -18,14 +40,10 @@ def validate_config(cfg: TrainConfig) -> list[str]:
         if not path:
             errors.append(f"{label} is empty — set it in sft_config.yaml")
             continue
-        p = Path(path)
-        if not p.is_file():
-            errors.append(f"{label} not found: {p}")
+        errors.extend(_check_jsonl_file(Path(path), label))
 
     if cfg.eval_data_path:
-        p = Path(cfg.eval_data_path)
-        if not p.is_file():
-            errors.append(f"eval_data_path not found: {p}")
+        errors.extend(_check_jsonl_file(Path(cfg.eval_data_path), "eval_data_path"))
 
     if cfg.curriculum_no_shuffle_epochs < 0:
         errors.append("curriculum_no_shuffle_epochs must be >= 0")

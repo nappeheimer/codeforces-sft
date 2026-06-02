@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
@@ -11,7 +11,6 @@ _CONFIG_NAME = "sft_config.yaml"
 
 def _find_config() -> Path | None:
     for path in (
-        Path(f"/opt/ml/input/data/code/{_CONFIG_NAME}"),
         Path(__file__).resolve().parent.parent / _CONFIG_NAME,
         Path(_CONFIG_NAME),
     ):
@@ -91,7 +90,7 @@ class TrainConfig:
 
 def load_config() -> TrainConfig:
     raw = _load_yaml()
-    valid = set(TrainConfig.__dataclass_fields__)
+    valid = {f.name for f in fields(TrainConfig)}
     cfg = TrainConfig(**{k: v for k, v in raw.items() if k in valid})
     # Resolve paths relative to config file directory.
     base = _find_config()

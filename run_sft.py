@@ -31,14 +31,10 @@ _REPO_ROOT = Path(__file__).resolve().parent
 
 
 def find_file(name: str) -> Path:
-    for path in (
-        Path(f"/opt/ml/input/data/code/{name}"),
-        _REPO_ROOT / name,
-        Path(name),
-    ):
+    for path in (_REPO_ROOT / name, Path(name)):
         if path.exists():
             return path
-    raise FileNotFoundError(f"Cannot find {name!r}")
+    raise FileNotFoundError(f"Cannot find {name!r} (looked in {_REPO_ROOT} and cwd)")
 
 
 def _accelerate_num_processes(accel_cfg: Path) -> int:
@@ -70,6 +66,8 @@ def launch(args: argparse.Namespace) -> None:
 
 
 def _maybe_login() -> None:
+    from huggingface_hub import login
+
     token = os.environ.get("HF_TOKEN", "")
     if token:
         login(token=token)
@@ -124,7 +122,6 @@ def _build_sft_config(cfg: TrainConfig, *, num_train_epochs: float):
         remove_unused_columns=True,
         dataloader_num_workers=1,
         dataloader_pin_memory=True,
-        overwrite_output_dir=True,
     )
 
 
@@ -138,7 +135,7 @@ def _create_trainer(
     model,
     shuffle_enabled: bool,
 ):
-    from sft import KLRegSFTTrainer
+    from sft.trainer import KLRegSFTTrainer
 
     return KLRegSFTTrainer(
         model=model,
@@ -153,7 +150,7 @@ def _create_trainer(
 
 
 def train(cfg: TrainConfig) -> None:
-    from huggingface_hub import login
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     from sft import build_datasets
@@ -179,9 +176,16 @@ def train(cfg: TrainConfig) -> None:
     _maybe_login()
 
     if cfg.report_to == "wandb" and is_main:
-        import wandb
+        try:
+            import importlib
 
-        wandb.init(project=cfg.wandb_project, name=cfg.wandb_run_name)
+            wandb = importlib.import_module("wandb")
+            wandb.init(project=cfg.wandb_project, name=cfg.wandb_run_name)
+        except ImportError:
+            print(
+                "[warn] report_to=wandb but wandb is not installed; skipping wandb.init",
+                flush=True,
+            )
 
     print("[train] Loading tokenizer ...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(
@@ -197,16 +201,20 @@ def train(cfg: TrainConfig) -> None:
 
     if cfg.use_liger_kernel:
         try:
-            from liger_kernel.transformers import apply_liger_kernel_to_qwen2
+            import importlib
 
-            apply_liger_kernel_to_qwen2()
+            liger = importlib.import_module("liger_kernel.transformers")
+            liger.apply_liger_kernel_to_qwen2()
             print("[train] Liger kernel applied.", flush=True)
         except ImportError:
             print("[train] liger-kernel not installed, skipping.", flush=True)
 
     attn_impl = "flash_attention_2"
     try:
-        import flash_attn  # noqa: F401
+        import importlib.util
+
+        if importlib.util.find_spec("flash_attn") is None:
+            raise ImportError
     except ImportError:
         attn_impl = "sdpa"
         print("[train] flash-attn not installed; using sdpa attention.", flush=True)
@@ -232,6 +240,7 @@ def train(cfg: TrainConfig) -> None:
 
     # One trainer for both phases so phase-2 init does not wipe epoch checkpoints.
     sft_args = _build_sft_config(cfg, num_train_epochs=float(total_epochs))
+    setattr(sft_args, "overwrite_output_dir", True)
     trainer = _create_trainer(
         cfg,
         sft_args=sft_args,

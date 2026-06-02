@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from collections.abc import Sized
+from typing import Any, Optional, cast
 
 import torch
 import torch.nn.functional as F
@@ -116,6 +117,7 @@ class KLRegSFTTrainer(SFTTrainer):
 
     @torch.no_grad()
     def _ref_logits(self, input_ids: torch.Tensor) -> torch.Tensor:
+        assert self._ref_model is not None
         out = self._ref_model(input_ids=input_ids.cpu())
         return out.logits.to(dtype=torch.float32, device=input_ids.device)
 
@@ -138,55 +140,66 @@ class KLRegSFTTrainer(SFTTrainer):
         per_token_kl = per_token_kl * token_mask
         return per_token_kl.sum() / token_mask.sum().clamp(min=1)
 
-    def _get_train_sampler(self):
-        if self.train_dataset is None:
+    def _get_train_sampler(self, train_dataset=None):
+        dataset = train_dataset if train_dataset is not None else self.train_dataset
+        if dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
 
         if self.shuffle_enabled:
-            return super()._get_train_sampler()
+            return super()._get_train_sampler(train_dataset)
 
         if self.args.world_size > 1:
             from torch.utils.data import DistributedSampler
 
             return DistributedSampler(
-                self.train_dataset,
+                dataset,
                 num_replicas=self.args.world_size,
                 rank=self.args.process_index,
                 shuffle=False,
                 seed=self.args.seed,
             )
-        return SequentialSampler(self.train_dataset)
+        return SequentialSampler(cast(Sized, dataset))
 
     def compute_loss(
         self,
         model,
         inputs,
         return_outputs: bool = False,
-        num_items_in_batch: Optional[int] = None,
-    ):
+        num_items_in_batch: int | torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> torch.Tensor | tuple[torch.Tensor, Any]:
+        sft_loss: torch.Tensor
+        outputs: Any = None
+
         if return_outputs:
-            sft_loss, outputs = super().compute_loss(
+            loss_out = super().compute_loss(
                 model,
                 inputs,
                 return_outputs=True,
                 num_items_in_batch=num_items_in_batch,
+                **kwargs,
             )
+            sft_loss, outputs = cast(tuple[torch.Tensor, Any], loss_out)
         else:
-            sft_loss = super().compute_loss(
-                model,
-                inputs,
-                return_outputs=False,
-                num_items_in_batch=num_items_in_batch,
+            sft_loss = cast(
+                torch.Tensor,
+                super().compute_loss(
+                    model,
+                    inputs,
+                    return_outputs=False,
+                    num_items_in_batch=num_items_in_batch,
+                    **kwargs,
+                ),
             )
-            outputs = None
 
         if self.kl_beta > 0 and self._ref_model is not None:
             input_ids = inputs["input_ids"]
             token_mask = self._assistant_mask(inputs)
 
             with torch.no_grad():
-                if outputs is not None and outputs.logits is not None:
-                    train_logits = outputs.logits.float()
+                logits = getattr(outputs, "logits", None) if outputs is not None else None
+                if logits is not None:
+                    train_logits = logits.float()
                 else:
                     train_logits = model(
                         input_ids=input_ids,
@@ -198,8 +211,8 @@ class KLRegSFTTrainer(SFTTrainer):
 
             self.log(
                 {
-                    "train/sft_loss": sft_loss.item(),
-                    "train/kl_loss": kl_loss.item(),
+                    "train/sft_loss": float(sft_loss.detach().item()),
+                    "train/kl_loss": float(kl_loss.detach().item()),
                     "train/kl_beta": self.kl_beta,
                 }
             )
