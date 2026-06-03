@@ -43,6 +43,10 @@ class TrainConfig:
     # ── Sequence ─────────────────────────────────────────────────────────────
     max_seq_length: int = 32_768
     packing: bool = False
+    # Filter examples whose total char count exceeds this before tokenisation.
+    # ~3 chars/token → 90 000 chars ≈ 30 000 tokens, safely under max_seq_length=32768.
+    # Set to 0 to disable. Removes <1% of data but eliminates the OOM spikes.
+    max_example_chars: int = 90_000
 
     # ── Optimisation ─────────────────────────────────────────────────────────
     learning_rate: float = 4.0e-5
@@ -69,6 +73,13 @@ class TrainConfig:
     load_best_model_at_end: bool = False
     metric_for_best_model: str = "eval_loss"
 
+    # ── LoRA ─────────────────────────────────────────────────────────────────
+    use_lora: bool = False
+    lora_r: int = 64
+    lora_alpha: int = 128       # 2× rank is standard
+    lora_dropout: float = 0.05
+    lora_target_modules: str = "all-linear"
+
     # ── KL regularisation ────────────────────────────────────────────────────
     kl_beta: float = 0.1
 
@@ -82,10 +93,10 @@ class TrainConfig:
     output_dir: str = "./checkpoints"
     hub_model_id: Optional[str] = None
     logging_steps: int = 10
-    save_total_limit: Optional[int] = None  # keep every epoch checkpoint
+    save_strategy: str = "steps"   # "steps" or "epoch"
+    save_steps: int = 50           # save every N optimizer steps
+    save_total_limit: int = 5      # keep only the 5 most recent checkpoints
     report_to: str = "tensorboard"
-    wandb_project: str = "finecf-cots-sft"
-    wandb_run_name: str = "qwen25-coder-7b-finecf-kl-reg"
 
 
 def load_config() -> TrainConfig:

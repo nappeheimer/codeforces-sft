@@ -1,4 +1,7 @@
-# 8× A100 80GB node — set num_processes to match GPU count
+# 8× A100 80GB node — ZeRO-3 + LoRA
+# LoRA (r=64) trains only ~90M params → optimizer states: ~135 MB/GPU (vs 28 GB full FT).
+# Frozen base IS the ref model (disable_adapter) → KL reg costs zero extra VRAM.
+# Peak per GPU: ~2 GB (sharded base) + ~15 GB (activations) + gradients → ~20 GB total.
 compute_environment: LOCAL_MACHINE
 debug: false
 deepspeed_config:
@@ -8,6 +11,15 @@ deepspeed_config:
   zero3_init_flag: true
   zero3_save_16bit_model: true
   zero_stage: 3
+  overlap_comm: true
+  allgather_bucket_size: 2e8
+  reduce_bucket_size: 2e8
+  stage3_max_live_parameters: 1e9
+  stage3_max_reuse_distance: 1e9
+  stage3_prefetch_bucket_size: 5e7
+  stage3_param_persistence_threshold: 1e6
+  reduce_scatter: true
+  contiguous_gradients: true
 distributed_type: DEEPSPEED
 downcast_bf16: "no"
 machine_rank: 0

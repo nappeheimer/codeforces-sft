@@ -65,6 +65,41 @@ def launch(args: argparse.Namespace) -> None:
     sys.exit(subprocess.run(cmd, check=False).returncode)
 
 
+def _patch_chat_template_for_assistant_loss(tokenizer) -> None:
+    """
+    Inject {% generation %} / {% endgeneration %} into the tokenizer's Jinja2 chat template.
+
+    Qwen2.5-Coder merges user, system, and assistant (no-tool-calls) into one generic branch:
+        {%- if (message.role == "user") or ... or (message.role == "assistant" and not message.tool_calls) %}
+            {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}
+    TRL cannot detect assistant tokens there. We split that branch so the assistant arm gets
+    its own block with {% generation %} markers wrapping only the content.
+    """
+    tpl = tokenizer.chat_template
+    if not tpl or "{% generation %}" in tpl:
+        return
+
+    old = (
+        '{%- if (message.role == "user") or (message.role == "system" and not loop.first)'
+        ' or (message.role == "assistant" and not message.tool_calls) %}\n'
+        "        {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}"
+    )
+    new = (
+        '{%- if (message.role == "user") or (message.role == "system" and not loop.first) %}\n'
+        "        {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}\n"
+        '    {%- elif message.role == "assistant" and not message.tool_calls %}\n'
+        "        {{- '<|im_start|>assistant\\n' }}{% generation %}{{- message.content + '<|im_end|>\\n' }}{% endgeneration %}"
+    )
+
+    if old not in tpl:
+        raise RuntimeError(
+            "Could not patch chat template: expected Qwen2.5 assistant branch not found. "
+            "Inspect tokenizer.chat_template and update _patch_chat_template_for_assistant_loss."
+        )
+    tokenizer.chat_template = tpl.replace(old, new)
+    print("[train] Chat template patched: added {% generation %} markers.", flush=True)
+
+
 def _maybe_login() -> None:
     from huggingface_hub import login
 
@@ -103,11 +138,12 @@ def _build_sft_config(cfg: TrainConfig, *, num_train_epochs: float):
         bf16=cfg.bf16,
         fp16=False,
         gradient_checkpointing=cfg.gradient_checkpointing,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing_kwargs={"use_reentrant": True},
         do_eval=cfg.do_eval,
         eval_strategy=cfg.eval_strategy if cfg.do_eval else "no",
         eval_steps=cfg.eval_steps,
-        save_strategy="epoch",
+        save_strategy=cfg.save_strategy,
+        save_steps=cfg.save_steps,
         load_best_model_at_end=cfg.load_best_model_at_end and cfg.do_eval,
         metric_for_best_model=cfg.metric_for_best_model,
         max_length=cfg.max_seq_length,
@@ -118,9 +154,8 @@ def _build_sft_config(cfg: TrainConfig, *, num_train_epochs: float):
         logging_steps=cfg.logging_steps,
         save_total_limit=save_limit,
         report_to=cfg.report_to,
-        run_name=cfg.wandb_run_name,
         remove_unused_columns=True,
-        dataloader_num_workers=1,
+        dataloader_num_workers=4,
         dataloader_pin_memory=True,
     )
 
@@ -146,10 +181,11 @@ def _create_trainer(
         ref_model_name_or_path=cfg.model_name_or_path,
         kl_beta=cfg.kl_beta,
         shuffle_enabled=shuffle_enabled,
+        use_lora=cfg.use_lora,
     )
 
 
-def train(cfg: TrainConfig) -> None:
+def train(cfg: TrainConfig, *, resume_from_checkpoint: str | None = None) -> None:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -175,18 +211,6 @@ def train(cfg: TrainConfig) -> None:
 
     _maybe_login()
 
-    if cfg.report_to == "wandb" and is_main:
-        try:
-            import importlib
-
-            wandb = importlib.import_module("wandb")
-            wandb.init(project=cfg.wandb_project, name=cfg.wandb_run_name)
-        except ImportError:
-            print(
-                "[warn] report_to=wandb but wandb is not installed; skipping wandb.init",
-                flush=True,
-            )
-
     print("[train] Loading tokenizer ...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model_name_or_path, trust_remote_code=True
@@ -198,6 +222,8 @@ def train(cfg: TrainConfig) -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    _patch_chat_template_for_assistant_loss(tokenizer)
 
     if cfg.use_liger_kernel:
         try:
@@ -228,6 +254,24 @@ def train(cfg: TrainConfig) -> None:
         attn_implementation=attn_impl,
     )
     print("[train] Model loaded.", flush=True)
+
+    if cfg.use_lora:
+        from peft import LoraConfig, TaskType, get_peft_model
+
+        lora_config = LoraConfig(
+            r=cfg.lora_r,
+            lora_alpha=cfg.lora_alpha,
+            target_modules=cfg.lora_target_modules,
+            lora_dropout=cfg.lora_dropout,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+        )
+        # enable_input_require_grads is required for gradient checkpointing + PEFT
+        model.enable_input_require_grads()
+        model = get_peft_model(model, lora_config)
+        if is_main:
+            model.print_trainable_parameters()
+            print("[train] LoRA adapters applied.", flush=True)
 
     curriculum_ds, shuffle_ds, eval_dataset = build_datasets(cfg)
     do_eval = cfg.do_eval and eval_dataset is not None
@@ -260,9 +304,9 @@ def train(cfg: TrainConfig) -> None:
                 flush=True,
             )
         trainer.args.num_train_epochs = float(curriculum_epochs)
-        trainer.set_train_dataset(curriculum_ds)
+        # trainer already has curriculum_ds tokenized from __init__ — don't overwrite with raw
         trainer.set_shuffle_enabled(False)
-        trainer.train()
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         if is_main:
             print("[train] Phase 1 complete.", flush=True)
 
@@ -277,7 +321,11 @@ def train(cfg: TrainConfig) -> None:
         trainer.args.num_train_epochs = float(total_epochs)
         trainer.set_train_dataset(shuffle_ds)
         trainer.set_shuffle_enabled(True)
-        trainer.train(resume_from_checkpoint=True if curriculum_epochs > 0 else None)
+        # Pass the resume checkpoint to Phase 2 only when Phase 1 was skipped
+        # (curriculum_epochs == 0). When Phase 1 ran, its train() already consumed
+        # the checkpoint and Phase 2 continues from the in-memory state.
+        phase2_resume = resume_from_checkpoint if curriculum_epochs == 0 else None
+        trainer.train(resume_from_checkpoint=phase2_resume)
         if is_main:
             print("[train] Phase 2 complete.", flush=True)
 
@@ -288,7 +336,7 @@ def train(cfg: TrainConfig) -> None:
     print("[train] Done. Checkpoints are under:", cfg.output_dir, flush=True)
 
 
-def _load_cfg_from_args(args: argparse.Namespace) -> TrainConfig:
+def _load_cfg_from_args(args: argparse.Namespace) -> tuple[TrainConfig, str | None]:
     cfg = load_config()
     if args.data_path:
         p = str(Path(args.data_path).resolve())
@@ -298,7 +346,8 @@ def _load_cfg_from_args(args: argparse.Namespace) -> TrainConfig:
         raise ValueError(
             "Set curriculum_data_path in sft_config.yaml or pass --data_path"
         )
-    return cfg
+    resume = getattr(args, "resume", None)
+    return cfg, resume
 
 
 def main() -> None:
@@ -315,28 +364,33 @@ def main() -> None:
         action="store_true",
         help="Validate config and JSONL paths only; do not train",
     )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        metavar="CHECKPOINT_DIR",
+        help="Resume from a checkpoint directory, e.g. ./checkpoints/checkpoint-200",
+    )
     args = parser.parse_args()
 
     if args.check_only:
-        cfg = _load_cfg_from_args(args)
+        cfg, _ = _load_cfg_from_args(args)
         run_preflight(cfg, load_data=True)
         return
 
     if not os.environ.get("HF_TOKEN"):
         print(
-            "ERROR: HF_TOKEN is not set. The base model downloads from Hugging Face.\n"
-            "  export HF_TOKEN=hf_...\n"
-            "See CLUSTER_RUNBOOK.md",
+            "[warn] HF_TOKEN is not set — will use cached HF credentials if the model "
+            "is already downloaded. If this is a fresh node, set: export HF_TOKEN=hf_...",
             flush=True,
         )
-        sys.exit(1)
 
     # Top-level invocation: launch via accelerate or train on one GPU.
     if "LOCAL_RANK" not in os.environ:
         launch(args)
         return
 
-    train(_load_cfg_from_args(args))
+    cfg, resume = _load_cfg_from_args(args)
+    train(cfg, resume_from_checkpoint=resume)
 
 
 if __name__ == "__main__":

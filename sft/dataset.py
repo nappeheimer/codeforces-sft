@@ -25,7 +25,12 @@ def _parse_jsonl_line(raw: object, lineno: int) -> list[dict]:
     )
 
 
-def load_jsonl(path: str | Path, *, label: str | None = None) -> Dataset:
+def load_jsonl(
+    path: str | Path,
+    *,
+    label: str | None = None,
+    max_chars: int = 0,
+) -> Dataset:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"JSONL not found: {path}")
@@ -33,14 +38,26 @@ def load_jsonl(path: str | Path, *, label: str | None = None) -> Dataset:
     tag = label or path.name
     print(f"[dataset] Loading {tag} from {path} ...", flush=True)
     rows: list[dict] = []
+    skipped = 0
     with path.open(encoding="utf-8") as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
             msgs = _parse_jsonl_line(json.loads(line), lineno)
+            if max_chars > 0:
+                total_chars = sum(len(m.get("content", "")) for m in msgs)
+                if total_chars > max_chars:
+                    skipped += 1
+                    continue
             rows.append({"messages": msgs})
 
+    if skipped:
+        print(
+            f"[dataset] Skipped {skipped} examples > {max_chars:,} chars "
+            f"({skipped/(len(rows)+skipped):.1%} of total) from {tag}",
+            flush=True,
+        )
     print(f"[dataset] Loaded {len(rows)} rows from {tag}", flush=True)
     logger.info("Loaded %d conversations from %s", len(rows), path)
     return Dataset.from_list(rows)
@@ -61,12 +78,13 @@ def build_datasets(cfg: TrainConfig) -> tuple[Dataset, Dataset, Dataset | None]:
         )
 
     shuffle_path = cfg.shuffle_data_path or curriculum_path
-    curriculum_ds = load_jsonl(curriculum_path, label="curriculum")
+    max_chars = cfg.max_example_chars
+    curriculum_ds = load_jsonl(curriculum_path, label="curriculum", max_chars=max_chars)
     if Path(shuffle_path).resolve() == Path(curriculum_path).resolve():
         shuffle_ds = curriculum_ds
         print("[dataset] shuffle_data_path == curriculum (same file, shuffle applied later)", flush=True)
     else:
-        shuffle_ds = load_jsonl(shuffle_path, label="shuffle")
+        shuffle_ds = load_jsonl(shuffle_path, label="shuffle", max_chars=max_chars)
 
     eval_ds: Dataset | None = None
     if cfg.eval_data_path:
