@@ -1,16 +1,67 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Sized
 from typing import Any, Optional, cast
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import SequentialSampler
+from torch.utils.data import Sampler, SequentialSampler
 from transformers import AutoModelForCausalLM, TrainerCallback
 from trl import SFTTrainer
 
 logger = logging.getLogger(__name__)
+
+
+class CurriculumSampler(Sampler):
+    """
+    Single-sampler curriculum learning for distributed training.
+
+    - Epochs 0 .. curriculum_epochs-1: iterate dataset in sequential order
+      (curriculum_ds is pre-sorted easy→hard, so this gives curriculum order).
+    - Epochs curriculum_epochs .. total: randomly shuffle indices each epoch.
+
+    Trainer calls dataloader.set_epoch(epoch) between epochs; Accelerate's
+    DataLoaderShard forwards that call to batch_sampler.sampler (us), so
+    self.epoch is always current when __iter__ fires.
+    """
+
+    def __init__(
+        self,
+        dataset_size: int,
+        curriculum_epochs: int,
+        num_replicas: int,
+        rank: int,
+        seed: int = 42,
+    ) -> None:
+        self.n = dataset_size
+        self.curriculum_epochs = curriculum_epochs
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.seed = seed
+        self.epoch = 0
+        self.num_samples = math.ceil(self.n / self.num_replicas)
+        self.total_size = self.num_samples * self.num_replicas
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __iter__(self):
+        if self.epoch < self.curriculum_epochs:
+            indices = list(range(self.n))
+        else:
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            indices = torch.randperm(self.n, generator=g).tolist()
+        # Pad so every replica gets the same number of samples.
+        indices += indices[: (self.total_size - len(indices))]
+        # Subsample for this rank.
+        indices = indices[self.rank : self.total_size : self.num_replicas]
+        return iter(indices)
+
+    def __len__(self) -> int:
+        return self.num_samples
 
 
 class ProgressPrintCallback(TrainerCallback):
@@ -30,6 +81,13 @@ class ProgressPrintCallback(TrainerCallback):
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if not state.is_world_process_zero or not logs:
+            return
+        if any(k.startswith("eval_") for k in logs):
+            parts = [f"epoch={state.epoch:.1f}", f"step={state.global_step}"]
+            for k, v in sorted(logs.items()):
+                if k.startswith("eval_") and k != "eval_runtime" and k != "eval_samples_per_second" and k != "eval_steps_per_second":
+                    parts.append(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}")
+            print(f"[eval]  {' | '.join(parts)}", flush=True)
             return
         if state.global_step and state.global_step % max(args.logging_steps, 1) == 0:
             loss = logs.get("loss")
@@ -77,6 +135,7 @@ class KLRegSFTTrainer(SFTTrainer):
         kl_beta: float = 0.1,
         shuffle_enabled: bool = True,
         use_lora: bool = False,
+        curriculum_epochs: int = 0,
         **kwargs,
     ):
         self.kl_beta = kl_beta
@@ -84,6 +143,7 @@ class KLRegSFTTrainer(SFTTrainer):
         self._ref_model_name_or_path = ref_model_name_or_path
         self.shuffle_enabled = shuffle_enabled
         self._use_lora = use_lora
+        self._curriculum_epochs = curriculum_epochs
 
         super().__init__(*args, **kwargs)
         self.add_callback(ProgressPrintCallback())
@@ -232,6 +292,17 @@ class KLRegSFTTrainer(SFTTrainer):
         dataset = train_dataset if train_dataset is not None else self.train_dataset
         if dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
+
+        if self._curriculum_epochs > 0:
+            # CurriculumSampler handles both phases via set_epoch():
+            # sequential for epochs 0..curriculum_epochs-1, then shuffled.
+            return CurriculumSampler(
+                dataset_size=len(dataset),
+                curriculum_epochs=self._curriculum_epochs,
+                num_replicas=self.args.world_size,
+                rank=self.args.process_index,
+                seed=self.args.seed,
+            )
 
         if self.shuffle_enabled:
             return super()._get_train_sampler(train_dataset)

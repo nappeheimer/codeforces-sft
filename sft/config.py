@@ -93,8 +93,8 @@ class TrainConfig:
     output_dir: str = "./checkpoints"
     hub_model_id: Optional[str] = None
     logging_steps: int = 10
-    save_strategy: str = "steps"   # "steps" or "epoch"
-    save_steps: int = 50           # save every N optimizer steps
+    save_strategy: str = "epoch"
+    save_steps: int = 50           # only used when save_strategy="steps"
     save_total_limit: int = 5      # keep only the 5 most recent checkpoints
     report_to: str = "tensorboard"
 

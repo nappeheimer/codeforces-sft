@@ -168,7 +168,7 @@ def _create_trainer(
     eval_dataset,
     tokenizer,
     model,
-    shuffle_enabled: bool,
+    curriculum_epochs: int = 0,
 ):
     from sft.trainer import KLRegSFTTrainer
 
@@ -180,8 +180,8 @@ def _create_trainer(
         processing_class=tokenizer,
         ref_model_name_or_path=cfg.model_name_or_path,
         kl_beta=cfg.kl_beta,
-        shuffle_enabled=shuffle_enabled,
         use_lora=cfg.use_lora,
+        curriculum_epochs=curriculum_epochs,
     )
 
 
@@ -282,9 +282,19 @@ def train(cfg: TrainConfig, *, resume_from_checkpoint: str | None = None) -> Non
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # One trainer for both phases so phase-2 init does not wipe epoch checkpoints.
+    # Single trainer.train() call — CurriculumSampler switches from sequential
+    # to shuffled ordering after curriculum_epochs via set_epoch(), so DeepSpeed
+    # is never torn down and re-initialised between phases.
     sft_args = _build_sft_config(cfg, num_train_epochs=float(total_epochs))
     setattr(sft_args, "overwrite_output_dir", True)
+
+    if is_main and curriculum_epochs > 0:
+        print(
+            f"\n[train] Curriculum: epochs 1–{curriculum_epochs} sequential, "
+            f"epochs {curriculum_epochs + 1}–{total_epochs} shuffled (single train() call)\n",
+            flush=True,
+        )
+
     trainer = _create_trainer(
         cfg,
         sft_args=sft_args,
@@ -292,42 +302,10 @@ def train(cfg: TrainConfig, *, resume_from_checkpoint: str | None = None) -> Non
         eval_dataset=eval_dataset if do_eval else None,
         tokenizer=tokenizer,
         model=model,
-        shuffle_enabled=(curriculum_epochs == 0),
+        curriculum_epochs=curriculum_epochs,
     )
 
-    # ── Phase 1: curriculum, no shuffle ───────────────────────────────────────
-    if curriculum_epochs > 0:
-        if is_main:
-            print(
-                f"\n[train] === Phase 1/2: curriculum, epochs 1–{curriculum_epochs} "
-                "(sequential, no shuffle) ===\n",
-                flush=True,
-            )
-        trainer.args.num_train_epochs = float(curriculum_epochs)
-        # trainer already has curriculum_ds tokenized from __init__ — don't overwrite with raw
-        trainer.set_shuffle_enabled(False)
-        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
-        if is_main:
-            print("[train] Phase 1 complete.", flush=True)
-
-    # ── Phase 2: shuffled training to total_epochs ────────────────────────────
-    if shuffle_epochs > 0:
-        if is_main:
-            print(
-                f"\n[train] === Phase 2/2: shuffled, epochs "
-                f"{curriculum_epochs + 1}–{total_epochs} ===\n",
-                flush=True,
-            )
-        trainer.args.num_train_epochs = float(total_epochs)
-        trainer.set_train_dataset(shuffle_ds)
-        trainer.set_shuffle_enabled(True)
-        # Pass the resume checkpoint to Phase 2 only when Phase 1 was skipped
-        # (curriculum_epochs == 0). When Phase 1 ran, its train() already consumed
-        # the checkpoint and Phase 2 continues from the in-memory state.
-        phase2_resume = resume_from_checkpoint if curriculum_epochs == 0 else None
-        trainer.train(resume_from_checkpoint=phase2_resume)
-        if is_main:
-            print("[train] Phase 2 complete.", flush=True)
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     if is_main:
         print("[train] Saving final weights and tokenizer ...", flush=True)
