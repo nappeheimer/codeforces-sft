@@ -7,7 +7,7 @@ def launch_training():
     # ==========================================
     # USER CONFIGURATION - EDIT THESE VALUES
     # ==========================================
-    role = "arn:aws:iam::118821712302:role/service-role/anish"
+    role = "<role>"
     bucket = "cf-generation-us-east-1"
 
 
@@ -51,7 +51,7 @@ def launch_training():
         entry_point="train.py",
         source_dir=".",  # Uploads current directory
         role=role,
-        image_uri="118821712302.dkr.ecr.us-east-1.amazonaws.com/olympic-coder-training:latest",
+        image_uri="<path>",
         instance_type="ml.p5en.48xlarge",  # 8x H200 (141GB)
         instance_count=1,
         output_path=output_path,
